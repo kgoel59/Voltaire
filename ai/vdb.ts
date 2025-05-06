@@ -6,11 +6,11 @@ export class VDB {
   index_names: string[];
   dimension: number;
 
-  constructor(apiKey: string, index_names: string[], dimension: number = 1536) {
+  constructor(apiKey: string, index_names: Record<string, string>, dimension: number = 1536) {
     this.pc = new Pinecone({
       apiKey: apiKey
     });
-    this.index_names = index_names;
+    this.index_names = Object.values(index_names);;
     this.dimension = dimension;
   }
 

@@ -22,9 +22,31 @@ export async function processNotes(app: App, settings: VoltairePluginSettings) {
       throw new Error('API keys are required in settings');
     }
 
+    // Validate input folder and output path
+    const inputFolderPath = normalizePath(settings.input_folder || '');
+    const outputFolderPath = normalizePath(settings.output_folder || '');
+    if (!inputFolderPath) {
+      throw new Error('Input folder path is not specified in settings');
+    }
+
+    if (!outputFolderPath) {
+      throw new Error('Output folder path is not specified in settings');
+    }
+
     // Initialize AI and vector database
     let ai: AI;
     let vdb: VDB;
+    const sanitizeForIndexName = (str: string) =>
+      str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    
+    const baseName = sanitizeForIndexName(inputFolderPath);
+    
+    const index_names = {
+      topics: `${baseName}-topics`,
+      categories: `${baseName}-categories`,
+      questions: `${baseName}-questions`
+    };
+
     try {
       ai = new AI(
         settings.open_api_key,
@@ -32,16 +54,12 @@ export async function processNotes(app: App, settings: VoltairePluginSettings) {
         settings.chat_model,
         settings.embdedding_model
       );
-      
-      vdb = new VDB(settings.pinecone_api_key, ['topics', 'categories', 'questions']);
+
+      // Initialize vector database
+      vdb = new VDB(settings.pinecone_api_key, index_names);
       await vdb.createIndexes();
     } catch (error) {
       throw new Error(`Failed to initialize AI or VDB: ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    const inputFolderPath = normalizePath(settings.input_folder || '');
-    if (!inputFolderPath) {
-      throw new Error('Input folder path is not specified in settings');
     }
 
     let markdownFiles;
@@ -80,9 +98,11 @@ export async function processNotes(app: App, settings: VoltairePluginSettings) {
             content,
             ai,
             vdb,
+            index_names,
             settings.topic_similarity_threshold,
             settings.category_similarity_threshold,
             settings.question_similarity_threshold,
+            settings.input_folder,
             settings.output_folder,
             settings.min_chunk_size,
             settings.max_chunk_size,

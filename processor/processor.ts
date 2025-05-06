@@ -52,7 +52,6 @@ export async function atomicFileUpdate(
   newContent: string,
   newPath?: string
 ) {
-  const originalContent = await vault.read(file);
   const originalPath = file.path;
 
   try {
@@ -90,9 +89,11 @@ export async function processor(
   originalContent: string,
   ai: AI,
   vdb: VDB,
+  index_names: Record<string, string>,
   topicSimilarityThreshold: number,
   categorySimilarityThreshold: number,
   questionSimilarityThreshold: number,
+  inputFolder: string,
   outputFolder: string,
   minChunkSize: number,
   maxChunkSize: number,
@@ -133,24 +134,25 @@ export async function processor(
         let createNewFile = true;
         let finalQuestion = question;
         let mergeQuestion: string | null = null;
+        let oldQuestionId = null;
 
         const questionEmbedding = await ai.createEmbeddings(question);
         const topicEmbedding = await ai.createEmbeddings(topic);
 
-        const similarQuestions = await vdb.findSimilar("questions", questionEmbedding, similarItemsCount, questionSimilarityThreshold);
-        const similarTopics = await vdb.findSimilar("topics", topicEmbedding, similarItemsCount, topicSimilarityThreshold);
+        const similarQuestions = await vdb.findSimilar(index_names["questions"], questionEmbedding, similarItemsCount, questionSimilarityThreshold);
+        const similarTopics = await vdb.findSimilar(index_names["topics"], topicEmbedding, similarItemsCount, topicSimilarityThreshold);
 
         if (similarQuestions.length > 0) {
           const [mostUsed] = similarQuestions.sort((a, b) =>
             parseInt(b.metadata.usage_count) - parseInt(a.metadata.usage_count)
           );
 
-          const oldQuestionId = mostUsed.id;
+          oldQuestionId = mostUsed.id;
           mergeQuestion = await ai.getQuestionFromLLM(merge_questions_prompt(oldQuestionId, question));
           finalQuestion = validateQuestion(mergeQuestion);
 
           const mergedEmbedding = await ai.createEmbeddings(finalQuestion);
-          await vdb.replaceInIndex("questions", {
+          await vdb.replaceInIndex(index_names["questions"], {
             oldId: oldQuestionId,
             newId: finalQuestion,
             embedding: mergedEmbedding,
@@ -163,7 +165,7 @@ export async function processor(
 
           createNewFile = false;
         } else {
-          await vdb.insertDataToIndex("questions", finalQuestion, questionEmbedding, {
+          await vdb.insertDataToIndex(index_names["questions"], finalQuestion, questionEmbedding, {
             usage_count: "1",
             merged_from: [],
             original_id: finalQuestion
@@ -176,9 +178,9 @@ export async function processor(
             parseInt(b.metadata.usage_count) - parseInt(a.metadata.usage_count)
           );
           finalTopic = mostUsed.id;
-          await vdb.updateUsageCount("topics", finalTopic, (parseInt(mostUsed.metadata.usage_count) + 1).toString());
+          await vdb.updateUsageCount(index_names["topics"], finalTopic, (parseInt(mostUsed.metadata.usage_count) + 1).toString());
         } else {
-          await vdb.insertDataToIndex("topics", finalTopic, topicEmbedding, {
+          await vdb.insertDataToIndex(index_names["topics"], finalTopic, topicEmbedding, {
             usage_count: "1"
           });
         }
@@ -205,7 +207,7 @@ export async function processor(
 
           await createOrUpdateFile(vault, filePath, chunkContent + chunkLocationBlock);
         } else {
-          const file = await findFileByName(vault, `${similarQuestions[0].id}.md`);
+          const file = await findFileByName(vault, `${oldQuestionId}.md`);
           if (file) {
             const fileContent = await vault.read(file);
             const existingFrontmatter = getFileFrontmatter(fileContent) || {};
@@ -245,7 +247,7 @@ export async function processor(
         const parentFolder = normalizePath(`${outputFolder}/${commonTopic}`);
         const categoryEmbedding = await ai.createEmbeddings(commonTopic);
 
-        const similarCategories = await vdb.findSimilar("categories", categoryEmbedding, similarItemsCount, categorySimilarityThreshold);
+        const similarCategories = await vdb.findSimilar(index_names["categories"], categoryEmbedding, similarItemsCount, categorySimilarityThreshold);
         let finalCategory = commonTopic;
 
         if (similarCategories.length > 0) {
@@ -253,9 +255,9 @@ export async function processor(
             parseInt(b.metadata.usage_count) - parseInt(a.metadata.usage_count)
           );
           finalCategory = mostUsed.id;
-          await vdb.updateUsageCount("categories", finalCategory, (parseInt(mostUsed.metadata.usage_count) + 1).toString());
+          await vdb.updateUsageCount(index_names["categories"], finalCategory, (parseInt(mostUsed.metadata.usage_count) + 1).toString());
         } else {
-          await vdb.insertDataToIndex("categories", finalCategory, categoryEmbedding, {
+          await vdb.insertDataToIndex(index_names["categories"], finalCategory, categoryEmbedding, {
             usage_count: "1"
           });
         }
